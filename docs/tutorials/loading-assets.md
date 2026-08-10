@@ -50,28 +50,27 @@ Alternatively, open your `.csproj` file in any text editor and add the file dire
 
 ## Step 3: Load the Embedded AssetBundle in Code
 
-Extract the bundle stream at runtime using `Assembly.GetManifestResourceStream()` and pass it into Unity's `AssetBundle.LoadFromStream()`:
+Extract the bundle stream at runtime using `Assembly.GetManifestResourceStream()` and pass it into Unity's `AssetBundle.LoadFromStream()`. Two things about this game's IL2CPP build specifically:
+`AssetBundle.LoadFromMemory` is stripped (only the `Async` variant exists), and `LoadFromStream` expects an `Il2CppSystem.IO.Stream`, not a regular .NET one — so the resource is read fully and handed to `Il2CppSystem.IO.MemoryStream` instead. There's also no generic `LoadAsset<T>()` on this build's `AssetBundle` — only `LoadAsset(string name)`, returning `UnityEngine.Object`, which you then `.Cast<T>()`.
 
 ```csharp
 private AssetBundle? myBundle;
 
 public override void Load()
 {
-    var assembly = Assembly.GetExecutingAssembly();
-    
     // Manifest path format: DefaultNamespace.Folders.FileName
-    using (Stream? stream = assembly.GetManifestResourceStream("MyCoolPlugin.Assets.mybundle"))
-    {
-        if (stream == null) return;
+    using Stream? stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("MyCoolPlugin.Assets.mybundle");
+    if (stream == null) return;
 
-        myBundle = AssetBundle.LoadFromStream(stream);
-        
-        // Load and instantiate a prefab from the bundle
-        GameObject prefab = myBundle.LoadAsset<GameObject>("MyPrefabName");
-        if (prefab != null)
-        {
-            Object.Instantiate(prefab);
-        }
+    using var memory = new MemoryStream();
+    stream.CopyTo(memory);
+    myBundle = AssetBundle.LoadFromStream(new Il2CppSystem.IO.MemoryStream(memory.ToArray()));
+
+    // Load and instantiate a prefab from the bundle
+    var asset = myBundle.LoadAsset("MyPrefabName");
+    if (asset != null)
+    {
+        Object.Instantiate(asset.Cast<GameObject>());
     }
 }
 ```

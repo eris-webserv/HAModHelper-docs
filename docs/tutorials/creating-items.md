@@ -73,40 +73,57 @@ ItemManager.Instance.AddItem(etheriteOre);
 
 #### Example B: Using Your Own Custom Assets
 
-Same item, but with your own 3D model from a Unity `AssetBundle` instead of reusing a vanilla one.
-The sprite stays a vanilla name — see [Sprite Resolution](#sprite-resolution) below for why a custom
-sprite path isn't guaranteed to resolve yet. See [Loading Custom Assets](loading-assets.md) for how
-to build the `AssetBundle` itself, and [Step 2](#step-2-registering-3d-world-prefabs) below for what
-`WorldPrefabManager.Register` is actually doing.
+Same item, but pointing at a custom sprite and a custom 3D model from your own Unity `AssetBundle`
+instead of reusing vanilla ones. See [Loading Custom Assets](loading-assets.md) for how to build the
+`AssetBundle` itself, [Sprite Resolution](#sprite-resolution) below for why the sprite line alone
+isn't enough to actually show an icon yet, and [Step 2](#step-2-registering-3d-world-prefabs) below
+for what `WorldPrefabManager.Register` is doing for the prefab.
 
 ```csharp
+using System.IO;
+using System.Reflection;
 using UnityEngine;
 using HAModHelper.GamePlugin.Items.Systems;
 
-// 1. Instantiate and configure the Etherite Ore item. World_obj_path is a key that only your
-//    own AssetBundle knows about (picked so it can't collide with a real base-game entry).
+// 1. Instantiate and configure the Etherite Ore item
 Item etheriteOre = new Item
 {
     ModId = "MyMod",
     ItemId = "EtheriteOre",
     Name = "Etherite Ore",
     Description = "A glowing, mysterious ore pulsating with mystical energy.",
-    StackLimit = 64,
-    SpritePath = "item titanium ore"
+    StackLimit = 64
 };
-etheriteOre.ExtraFields["World_obj_path"] = "MyMod_EtheriteOre_world";
+
+// 2. Raw field names via ExtraFields. Inventory_sprite_path here is identical to setting
+//    Item.SpritePath -- ExtraFields always wins (see ItemConverter.ToGameFields) -- shown
+//    this way so it's clear this is just a game field, not special AssetBundle-aware behavior.
+etheriteOre.ExtraFields["Inventory_sprite_path"] = "item etherite ore";
+etheriteOre.ExtraFields["World_obj_path"] = "Buildables/BiomeBuildables/Etherite Vein";
 etheriteOre.ExtraFields["Type"] = "Place_in_world";
 
-// 2. Register the item with ItemManager
+// 3. Register the item with ItemManager
 ItemManager.Instance.AddItem(etheriteOre);
 
-// 3. Load your own AssetBundle and register its prefab for this item's World_obj_path
-AssetBundle bundle = AssetBundle.LoadFromFile("path/to/mymod_assets.bundle");
+// 4. Load your own embedded AssetBundle (see Loading Custom Assets for how to embed it) and
+//    register its prefab for this item's World_obj_path. "Etherite Vein" is the GameObject's
+//    name inside the bundle -- read it straight from the bundle's own container manifest if
+//    you're not sure what you named it in Unity.
+//
+// AssetBundle.LoadFromMemory is stripped from this IL2CPP build, and LoadFromStream needs an
+// Il2CppSystem.IO.Stream rather than a regular .NET one, so the embedded resource is read fully
+// and handed to Il2CppSystem.IO.MemoryStream instead.
+Assembly assembly = Assembly.GetExecutingAssembly();
+using Stream stream = assembly.GetManifestResourceStream("MyMod.mymod.bundle")!;
+using var memory = new MemoryStream();
+stream.CopyTo(memory);
+AssetBundle bundle = AssetBundle.LoadFromStream(new Il2CppSystem.IO.MemoryStream(memory.ToArray()));
+
 WorldPrefabManager.Instance.Register(
     itemFullId: etheriteOre.Id,
     worldObjPath: etheriteOre.ExtraFields["World_obj_path"],
     bundle: bundle,
-    assetName: "EtheriteOreWorldPrefab"
+    assetName: "Etherite Vein"
 );
 ```
 
@@ -114,10 +131,10 @@ Call `ItemManager.Instance.AddItem(...)` from your plugin's `Load()` method — 
 
 ### Sprite Resolution
 
-`SpritePath` is passed straight through to the game as the raw `Inventory_sprite_path` field — HAModHelper does **not** resolve it to a file on disk. In practice this means:
+`SpritePath` (or the equivalent raw `ExtraFields["Inventory_sprite_path"]`, as in Example B above) is passed straight through to the game as-is — HAModHelper does **not** resolve it to a file on disk. In practice this means:
 
-* **Vanilla sprite names work out of the box** (e.g. `"item titanium ore"`, as used in both examples above, or `"item egg"` as used in this project's own [`Debug.cs`](../../src/HAModHelper.GamePlugin/Base/Debug.cs)) — the base game already knows how to find those.
-* **A path to your own `AssetBundle`-loaded sprite is not guaranteed to resolve.** There is currently no `SpriteManager`-style hook (unlike world prefabs, see below) that lets HAModHelper serve a custom sprite when the base game can't find one in its own catalog. If your icon shows up blank in-game, this is almost always why — stick to a vanilla sprite name like both examples above until that hook exists.
+* **Vanilla sprite names work out of the box** (e.g. `"item titanium ore"`, as used in Example A above, or `"item egg"` as used in this project's own [`Debug.cs`](../../src/HAModHelper.GamePlugin/Base/Debug.cs)) — the base game already knows how to find those.
+* **A custom key pointing at your own `AssetBundle`-loaded sprite will not resolve**, as in Example B above (`"item etherite ore"` renders blank in-game). There is currently no `SpriteManager`-style hook (unlike world prefabs, see below) that lets HAModHelper serve a custom sprite when the base game can't find one in its own catalog. The world prefab in the same example works fine regardless, since `WorldPrefabManager` *does* exist for that case.
 
 ---
 
@@ -130,18 +147,24 @@ that need their **own** 3D model, as shown in Example B: register it from an `As
 embed the `AssetBundle` itself.
 
 ```csharp
+using System.IO;
+using System.Reflection;
 using UnityEngine;
 using HAModHelper.GamePlugin.Items.Systems;
 
-// Load your custom Unity AssetBundle
-AssetBundle myModBundle = AssetBundle.LoadFromFile("path/to/mymod_assets.bundle");
+// Load your own embedded Unity AssetBundle (see Loading Custom Assets for how to embed it)
+Assembly assembly = Assembly.GetExecutingAssembly();
+using Stream stream = assembly.GetManifestResourceStream("MyMod.mymod.bundle")!;
+using var memory = new MemoryStream();
+stream.CopyTo(memory);
+AssetBundle myModBundle = AssetBundle.LoadFromStream(new Il2CppSystem.IO.MemoryStream(memory.ToArray()));
 
 // Register the 3D model asset for Etherite Ore
 WorldPrefabManager.Instance.Register(
     itemFullId: "MyMod:EtheriteOre",
-    worldObjPath: "Prefabs/MyMod/etherite_ore_world",
+    worldObjPath: "Buildables/BiomeBuildables/Etherite Vein",
     bundle: myModBundle,
-    assetName: "EtheriteOreWorldPrefab"
+    assetName: "Etherite Vein"
 );
 ```
 
